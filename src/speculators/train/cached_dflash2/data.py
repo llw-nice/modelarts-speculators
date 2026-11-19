@@ -223,7 +223,7 @@ def predictions(model, data, anchors, training):
         )
         mtp = data["mtp_sample_hidden"][rows, anchors]
         h = model.backbone(data["features"], data["ids"], anchors, mtp, first)
-        index = anchors[:, :, None] + 1 + torch.arange(6, device=anchors.device)
+        index = anchors[:, :, None] + 2 + torch.arange(6, device=anchors.device)
     else:
         first = data["ids"][rows, anchors]
         h = model.backbone(data["features"], data["ids"], anchors)

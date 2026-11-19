@@ -137,30 +137,37 @@ class DMTPDraft(Draft):
         first = first_tokens.reshape(-1)
         if first.shape != a.shape:
             raise ValueError("One first candidate per block required")
+        # v1.5 keeps the pending target token A and the MTP candidate T1 as
+        # separate anchors, followed by six masked positions for T2..T7.
         ids = torch.full(
-            (a.numel(), 7),
+            (a.numel(), 8),
             self.config["dflash_config"]["mask_token_id"],
             device=tokens.device,
             dtype=torch.long,
         )
-        ids[:, 0] = first
+        anchor_rows = torch.arange(anchors.shape[0], device=tokens.device)
+        anchor_rows = anchor_rows.repeat_interleave(anchors.shape[1])
+        anchor_tokens = tokens.reshape(-1, tokens.shape[-1])[anchor_rows, a]
+        ids[:, 0] = anchor_tokens
+        ids[:, 1] = first
         x = self.embed_tokens(ids)
         if self.mode == "fusion":
             if mtp_hidden is None:
                 raise ValueError("Native MTP sample hidden is required")
             x = torch.cat(
                 [
-                    self.anchor_fusion(x[:, 0], mtp_hidden.reshape(a.numel(), -1))[
+                    self.anchor_fusion(x[:, 1], mtp_hidden.reshape(a.numel(), -1))[
                         :, None
                     ],
-                    x[:, 1:],
+                    x[:, 2:],
                 ],
                 1,
             )
+            x = torch.cat([self.embed_tokens(anchor_tokens)[:, None], x], 1)
         ctx = self.hidden_norm(self.fc(features))
         for layer in self.layers:
-            x = layer(x, ctx, anchors=a + 1, context_ends=a)
-        return self.norm(x)[:, 1:]
+            x = layer(x, ctx, anchors=a, context_ends=a)
+        return self.norm(x)[:, 2:]
 
     def forward(self, features, tokens, anchors, mtp_hidden=None, first_tokens=None):
         h = self.backbone(features, tokens, anchors, mtp_hidden, first_tokens)
@@ -184,11 +191,12 @@ class DMTPDraft(Draft):
         save_file(state, str(dest / "model.safetensors"), metadata={"format": "pt"})
         config = json.loads(json.dumps(self.config))
         config["architectures"] = ["DMTPDFlash2DraftModel"]
-        config["dflash_config"]["block_size"] = 7
+        config["dflash_config"]["block_size"] = 8
         config["dmtp"] = {
             "schema_version": 1,
             "mode": self.mode,
-            "draft_input_slots": 7,
+            "draft_input_slots": 8,
+            "anchors": ["pending_A", "mtp_candidate_T1"],
             "fusion_residual": self.fusion_residual,
             "proposed_tokens": 7,
             "dflash_predicted_tokens": 6,

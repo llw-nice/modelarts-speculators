@@ -134,11 +134,12 @@ def export_epoch(model, output, epoch):
     config = json.loads(json.dumps(model.config))
     if isinstance(model, DMTPDraft):
         config["architectures"] = ["DMTPDFlash2DraftModel"]
-        config["dflash_config"]["block_size"] = 7
+        config["dflash_config"]["block_size"] = 8
         config["dmtp"] = {
             "schema_version": 1,
             "mode": model.mode,
-            "draft_input_slots": 7,
+            "draft_input_slots": 8,
+            "anchors": ["pending_A", "mtp_candidate_T1"],
             "fusion_residual": model.fusion_residual,
             "proposed_tokens": 7,
             "dflash_predicted_tokens": 6,

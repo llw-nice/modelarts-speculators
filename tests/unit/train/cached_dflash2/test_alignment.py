@@ -152,7 +152,29 @@ class TimingTests(unittest.TestCase):
         _, _, first_eval = predictions(self.model, data, self.a, False)
         torch.testing.assert_close(first_train, self.tokens[:, 8])
         torch.testing.assert_close(first_eval, data["mtp_token"][:, 7])
-        self.assertEqual(index.flatten().tolist(), [8, 9, 10, 11, 12, 13])
+        self.assertEqual(index.flatten().tolist(), [9, 10, 11, 12, 13, 14])
+
+    def test_dual_anchor_layout_supports_multiple_blocks_per_sequence(self):
+        anchors = torch.tensor([[5, 9]], device=DEVICE)
+        first = torch.tensor([[31, 32]], device=DEVICE)
+        mtp = torch.randn(1, 2, 32, device=DEVICE)
+        hidden = self.model.backbone(
+            self.features, self.tokens, anchors, mtp, first
+        )
+        self.assertEqual(tuple(hidden.shape), (2, 6, 32))
+        _, indices, first_flat = predictions(
+            self.model,
+            {
+                "ids": self.tokens,
+                "features": self.features,
+                "mtp_sample_hidden": torch.randn(1, 20, 32, device=DEVICE),
+                "mtp_token": torch.zeros(1, 20, dtype=torch.long, device=DEVICE),
+            },
+            anchors,
+            True,
+        )
+        self.assertEqual(indices.flatten().tolist(), list(range(7, 13)) + list(range(11, 17)))
+        torch.testing.assert_close(first_flat, self.tokens[0, anchors[0] + 1])
 
     def test_export_identifies_hybrid_and_roundtrips_all_fusion_weights(self):
         with tempfile.TemporaryDirectory() as d:
