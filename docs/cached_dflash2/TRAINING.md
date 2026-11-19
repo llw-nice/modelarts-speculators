@@ -102,7 +102,7 @@ python scripts/plot_cached_dflash2.py \
 
 默认五轮、batch 上限 32、padded context budget 48000、每图 64 training anchors、验证 8 anchors、seed 280、20% linear warmup 后 linear decay。历史 17998 个有效 train 样本的每轮为 563 步，共 2815；换数据/长度后以 provenance 生成的 batch plan 为准，不硬编码这个步数。
 
-使用 FP32 trainable master weights/Adam，BF16 autocast，冻结 embedding、LM head、candidate selector。KL 为同前缀 full-vocab teacher 分布；CE 标签是同前缀 teacher argmax，**不是 transcript ID**。位置权重为 `exp(-slot/4)` 后归一到均值 1；dense 七位、D-MTP 后六位。head 按 128 hidden rows 分块计算完整 vocabulary；不会只在 top-16 内算 KL。top-16 用于冻结 selector 的候选选择。
+使用 FP32 trainable master weights/Adam，BF16 autocast，冻结 embedding、LM head、candidate selector。历史 `kl` 配方使用同前缀 full-vocab teacher 分布，历史 `ce` 配方使用 teacher argmax；新增 `token_ce` 配方直接用 transcript token IDs。D-MTP v1.5 使用位置衰减 `token_ce`，标签是 T2…T7 的真实 token。位置权重为 `exp(-slot/4)` 后归一到均值 1；dense 七位、D-MTP 后六位。teacher 分布 head 按 128 hidden rows 分块；top-16 用于冻结 selector 的候选选择。
 
 `memory_limit_gib` 是本进程 PyTorch allocator 上限，非目标显存占用；CUDA 启动要求另留 16 GiB。提高 batch/context/anchors 会改变实验配方，不能静默调大后与旧记录混用。
 

@@ -12,7 +12,11 @@ from speculators.train.cached_dflash2.common import (
     linear_lr,
     prefix_summary,
 )
-from speculators.train.cached_dflash2.loss import frozen_head_loss, head_candidates
+from speculators.train.cached_dflash2.loss import (
+    frozen_head_loss,
+    frozen_token_cross_entropy,
+    head_candidates,
+)
 
 
 class RecipeTests(unittest.TestCase):
@@ -77,6 +81,28 @@ class RecipeTests(unittest.TestCase):
         self.assertLess(h.grad[0, 0, 0].item(), 0)
         self.assertGreater(h.grad[0, 0, 1].item(), 0)
         self.assertIsNone(teacher.grad)
+
+    def test_v15_token_ce_uses_transcript_labels_and_slot_decay(self):
+        torch.manual_seed(15)
+        hidden = torch.randn(2, 6, 8, requires_grad=True)
+        labels = torch.randint(0, 19, (2, 6))
+        head = torch.randn(19, 8)
+        weights = torch.exp(-torch.arange(6) / 4)
+        weights /= weights.mean()
+        loss, candidates = frozen_token_cross_entropy(
+            hidden, labels, head, weights, chunk_size=5
+        )
+        logits = functional.linear(hidden, head)
+        expected = (
+            functional.cross_entropy(
+                logits.reshape(-1, 19), labels.reshape(-1), reduction="none"
+            ).reshape(2, 6)
+            * weights
+        ).mean()
+        torch.testing.assert_close(loss, expected)
+        torch.testing.assert_close(
+            candidates, logits.topk(16, -1).indices
+        )
 
     def test_epoch_plan_never_drops_or_repeats_images_within_epoch(self):
         records = [{"id": n, "tokens": 10 + n % 40} for n in range(521)]

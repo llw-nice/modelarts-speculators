@@ -27,7 +27,7 @@ from .common import (
 )
 from .config import CachedDFlash2Config
 from .dmtp import DMTPDraft
-from .loss import frozen_head_loss, head_candidates
+from .loss import frozen_head_loss, frozen_token_cross_entropy, head_candidates
 from .model import Draft
 
 FROZEN = ("embed_tokens.", "lm_head.", "candidate_selector.")
@@ -311,9 +311,11 @@ def train(a: CachedDFlash2Config):  # noqa: C901
         "tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
         "trainable_parameters": sum(x.numel() for x in params),
         "frozen_components": list(FROZEN),
-        "ce_target": (
-            "cached verifier logits argmax at same prefix, never transcript IDs"
-        ),
+        "ce_target": {
+            "token_ce": "ground-truth transcript token IDs at T2..T7",
+            "ce": "cached verifier logits argmax at the same prefix",
+            "kl": "cached verifier full-vocabulary distribution at the same prefix",
+        }[a.objective],
         "precision": (
             "FP32 master/Adam; BF16 autocast, frozen head and cached teacher features"
         ),
@@ -377,10 +379,18 @@ def train(a: CachedDFlash2Config):  # noqa: C901
                 hidden, teacher_index, _ = cache.predictions(model, data, anchors, True)
                 weights = torch.exp(-torch.arange(hidden.shape[1], device=a.device) / 4)
                 weights /= weights.mean()
-                teacher = data["teacher_hidden"][rows, teacher_index].reshape_as(hidden)
-                loss, _, _ = frozen_head_loss(
-                    hidden, teacher, model.lm_head.weight, weights, a.objective
-                )
+                if a.objective == "token_ce":
+                    labels = data["ids"][rows, teacher_index]
+                    loss, _ = frozen_token_cross_entropy(
+                        hidden, labels, model.lm_head.weight, weights
+                    )
+                else:
+                    teacher = data["teacher_hidden"][
+                        rows, teacher_index
+                    ].reshape_as(hidden)
+                    loss, _, _ = frozen_head_loss(
+                        hidden, teacher, model.lm_head.weight, weights, a.objective
+                    )
             if not torch.isfinite(loss):
                 raise FloatingPointError("Nonfinite training loss")
             loss.backward()
@@ -408,7 +418,9 @@ def train(a: CachedDFlash2Config):  # noqa: C901
                     a.output / "progress.json", dict(state="training", **metrics)
                 )
             # Free activations before full validation/checkpoint CPU copies.
-            del hidden, teacher, data, loss
+            del hidden, data, loss
+            if a.objective != "token_ce":
+                del teacher
             at_epoch_end = step == total or plan[step][0] != epoch
             if at_epoch_end or (a.pilot_steps and step == a.pilot_steps):
                 measured = evaluate(model, val, a)
