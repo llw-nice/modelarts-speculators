@@ -14,6 +14,8 @@
 - [2026-11-10 D-MTP 实跑结果、loss 曲线与复核代码](results/allava_dmtp_20261110/README.md)
 - [六个配方](../../examples/cached_dflash2)
 
+> **D-MTP v1.5：** 当前双 anchor 实现的离线数据准备、训练时序、配置、pilot、正式训练与交付步骤见 [DMTP v1.5 完整指南](DMTP_V1.5_README.md)。下方模式表和后续历史实验说明记录的是原始 v1.0 布局。
+
 ## 对应结构
 
 | 模式   | 首位来源       | DFlash2 输入                    | 训练预测位置 | 可训练部分               |
