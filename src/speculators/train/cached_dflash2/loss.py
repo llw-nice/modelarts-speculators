@@ -1,8 +1,7 @@
-"""Frozen-head teacher losses and transcript-token CE with bounded memory.
+"""Frozen full-vocabulary teacher losses with bounded temporary memory.
 
-The legacy ``ce`` objective uses teacher argmax labels. The ``token_ce``
-objective uses transcript IDs. Only draft hidden states receive gradients;
-the output head and teacher stay frozen.
+CE targets are the teacher argmax at the supplied prefix, never transcript IDs.
+Only draft hidden states receive gradients. The head and teacher stay frozen.
 """
 
 import torch
@@ -63,55 +62,6 @@ class FrozenHeadLoss(torch.autograd.Function):
 
 def frozen_head_loss(hidden, teacher, head, weights, objective, chunk_size=128):
     return FrozenHeadLoss.apply(hidden, teacher, head, weights, chunk_size, objective)
-
-
-class FrozenTokenCrossEntropy(torch.autograd.Function):
-    """Position-weighted CE against transcript token IDs, with a frozen head."""
-
-    @staticmethod
-    def forward(ctx, hidden, labels, head, weights, chunk_size):
-        if head.requires_grad or labels.shape != hidden.shape[:-1]:
-            raise ValueError("Expected transcript labels aligned to hidden slots")
-        shape = labels.shape
-        h = hidden.reshape(-1, hidden.shape[-1])
-        gold = labels.reshape(-1).long()
-        scale = weights.expand(shape).reshape(-1) / len(h)
-        grad = torch.empty_like(h)
-        candidates = torch.empty(
-            (len(h), min(16, head.shape[0])), device=h.device, dtype=torch.long
-        )
-        loss = torch.zeros((), device=h.device, dtype=torch.float32)
-        with torch.autocast(h.device.type, enabled=False):
-            for start in range(0, len(h), chunk_size):
-                end = min(start + chunk_size, len(h))
-                q = functional.linear(h[start:end].to(head.dtype), head).float()
-                chunk_labels = gold[start:end]
-                candidates[start:end] = q.topk(candidates.shape[-1], -1).indices
-                per_slot = functional.cross_entropy(
-                    q, chunk_labels, reduction="none"
-                )
-                delta = q.softmax(-1)
-                delta.scatter_add_(
-                    1,
-                    chunk_labels[:, None],
-                    -torch.ones_like(chunk_labels[:, None], dtype=delta.dtype),
-                )
-                loss += (per_slot * scale[start:end]).sum()
-                grad[start:end] = (
-                    delta * scale[start:end, None]
-                ).to(head.dtype) @ head
-        ctx.save_for_backward(grad.reshape_as(hidden))
-        ctx.mark_non_differentiable(candidates)
-        return loss, candidates.reshape(*shape, -1)
-
-    @staticmethod
-    def backward(ctx, upstream, _unused_candidates):
-        (gradient,) = ctx.saved_tensors
-        return gradient * upstream, None, None, None, None
-
-
-def frozen_token_cross_entropy(hidden, labels, head, weights, chunk_size=128):
-    return FrozenTokenCrossEntropy.apply(hidden, labels, head, weights, chunk_size)
 
 
 @torch.no_grad()

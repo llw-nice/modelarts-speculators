@@ -17,11 +17,11 @@ DFlash 预测 T2…T7；target 验证 T1…T7
 
 1. 完整的 token IDs，且与采集 hidden 时的 tokenizer、模板、图像处理和位置完全一致。
 2. 目标模型在草稿配置指定层的 hidden states，用作 DFlash context features。
-3. 目标模型 LM head 的输入 hidden，用于当前训练器的缓存教师评估；v1.5 正式训练 loss 的标签来自真实 token IDs。
+3. 目标模型 LM head 的输入 hidden，用作冻结教师头的蒸馏监督。
 4. 原生 MTP 的预测时 hidden 和对应候选 token；必须能按 token 位置与 IDs 对齐。
 5. 初始 dense DFlash2 checkpoint，以及与 target 匹配的共享 embedding 和 LM head。
 
-你已有的第 5、15、25、35、45 层 hidden states 可作为 DFlash 的五路 context features，前提是它们确实对应初始草稿 `config.json` 的 `dflash_config.target_layer_ids`，且按该顺序拼接。你说的最后一层输出只有在它是**目标 LM head 实际接收的 hidden**时，才能作为 `teacher_hidden` 供缓存评估使用；v1.5 训练标签仍取自 token IDs。MTP 数据还必须含有预测 `T1` 时的单流 hidden；只有 MTP 输入和生成的 token 不够做 v1.5 的 fusion 训练。
+你已有的第 5、15、25、35、45 层 hidden states 可作为 DFlash 的五路 context features，前提是它们确实对应初始草稿 `config.json` 的 `dflash_config.target_layer_ids`，且按该顺序拼接。你说的最后一层输出只有在它是**目标 LM head 实际接收的 hidden**时，才能直接作为 `teacher_hidden`。MTP 数据还必须含有预测 `T1` 时的单流 hidden；只有 MTP 输入和生成的 token 不够做 v1.5 的 fusion 训练。
 
 先从 checkpoint 核实：
 
@@ -103,7 +103,7 @@ Manifest 是 UTF-8 JSON 数组，示例：
 |---|---|---|
 | `ids` | `[L]`，int32/int64 | 完整多模态 token 序列，和 hidden 使用同一位置索引 |
 | `features` | `[L, 5H]`，BF16 | 五层 collapsed hidden 按 `target_layer_ids` 顺序拼接；此处 H 是 draft hidden size |
-| `teacher_hidden` | `[L, H]`，BF16 | target LM head 输入；位置 i 对应预测 `ids[i+1]` 的分布，用于缓存教师评估和旧蒸馏配方，不是 v1.5 token CE 标签 |
+| `teacher_hidden` | `[L, H]`，BF16 | target LM head 输入；位置 i 对应预测 `ids[i+1]` 的分布 |
 | `prompt_length` | Python int | 与 manifest 完全相同 |
 | `image_sha256` | str | 与 manifest 完全相同 |
 
@@ -146,11 +146,11 @@ export DMTP_CACHE_MANIFEST=/data/dmtp-v15/manifest.json
 export DMTP_RUN_ROOT=/runs/dmtp-v15
 ```
 
-先用 v1.5 fusion 配置扫描缓存。该命令读取数据并验证格式，不开始训练：
+先用 fusion 配置扫描缓存。该命令读取数据并验证格式，不开始训练：
 
 ```bash
 speculators train-cached-dflash2 \
-  --config examples/cached_dflash2/fusion-v1.5-token-ce-3e-5.yaml \
+  --config examples/cached_dflash2/fusion-kl-3e-5.yaml \
   --check-data
 ```
 
@@ -162,7 +162,7 @@ speculators train-cached-dflash2 \
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 speculators train-cached-dflash2 \
-  --config examples/cached_dflash2/fusion-v1.5-token-ce-3e-5.yaml \
+  --config examples/cached_dflash2/fusion-kl-3e-5.yaml \
   --output "$DMTP_RUN_ROOT/fusion-pilot" \
   --pilot-steps 3 --pilot-val-images 8
 ```
@@ -171,11 +171,11 @@ CUDA_VISIBLE_DEVICES=0 speculators train-cached-dflash2 \
 
 ## 6. 正式训练 v1.5 fusion
 
-仓库的 `examples/cached_dflash2/fusion-v1.5-token-ce-3e-5.yaml` 已选择 `arm: fusion`、`fusion_init: residual-zero` 和 transcript token CE。确认文件内变量对应当前会话设置后，启动正式训练：
+仓库的 `examples/cached_dflash2/fusion-kl-3e-5.yaml` 已选择 `arm: fusion` 和 `fusion_init: residual-zero`。确认文件内变量对应当前会话设置后，启动正式训练：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 speculators train-cached-dflash2 \
-  --config examples/cached_dflash2/fusion-v1.5-token-ce-3e-5.yaml
+  --config examples/cached_dflash2/fusion-kl-3e-5.yaml
 ```
 
 也可以复制 YAML 到本次实验目录，显式写全字段：
@@ -187,7 +187,7 @@ manifest: ${DMTP_CACHE_MANIFEST}
 output: ${DMTP_RUN_ROOT}/fusion-v1.5
 arm: fusion
 fusion_init: residual-zero
-objective: token_ce
+objective: kl
 lr: 3e-5
 epochs: 5
 warmup_fraction: 0.2
@@ -210,7 +210,7 @@ CUDA_VISIBLE_DEVICES=0 speculators train-cached-dflash2 \
 
 ## 7. 训练目标与运行产物
 
-Fusion 模式冻结 target、原生 MTP、共享 embedding/head 和 candidate selector，训练 DFlash 主干及 `anchor_fusion`。训练样本的 T1 是 gold token `ids[a+1]`；只对 DFlash 后六个输出位置计算 loss，标签是 transcript 中的真实 token `ids[a+2:a+8]`。v1.5 使用 DFlash 的位置衰减交叉熵：每个位置按 `exp(-slot/4)` 加权并归一化到均值为 1。不要把 `objective: kl` 或 `objective: ce` 当成同一训练目标：这两个旧配方分别是冻结教师分布 KL 和教师 argmax CE。v1.5 示例配置为 `examples/cached_dflash2/fusion-v1.5-token-ce-3e-5.yaml`。教师 hidden 仍用于缓存评估，但不会作为 v1.5 token CE 的标签。
+Fusion 模式冻结 target、原生 MTP、共享 embedding/head 和 candidate selector，训练 DFlash 主干及 `anchor_fusion`。训练样本的 T1 是 gold token `ids[a+1]`；只对 DFlash 后六个输出位置计算 loss，目标位置为 `a+2…a+7`。KL 配方使用冻结 target head 的全词表同前缀分布；CE 配方使用同前缀 teacher argmax。候选 selector 的 top-k 仅用于候选选择，不代表 KL 只在 top-k 上计算。
 
 主要产物位于配置的 `output`：
 
