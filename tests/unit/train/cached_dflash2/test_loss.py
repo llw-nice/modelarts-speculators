@@ -22,7 +22,7 @@ class RecipeTests(unittest.TestCase):
         torch.backends.cuda.matmul.allow_tf32 = False
         device = "cuda" if torch.cuda.is_available() else "cpu"
         for dtype in (torch.float32, torch.bfloat16):
-            for objective in ("kl", "ce"):
+            for objective in ("kl", "ce", "soft_ce"):
                 with self.subTest(dtype=dtype, objective=objective):
                     torch.manual_seed(280)
                     h = (
@@ -48,6 +48,8 @@ class RecipeTests(unittest.TestCase):
                         else functional.cross_entropy(
                             q.reshape(-1, 73), gold.flatten(), reduction="none"
                         ).reshape(3, 7)
+                        if objective == "ce"
+                        else -(t.softmax(-1) * q.log_softmax(-1)).sum(-1)
                     )
                     ref = (ref * weights).mean()
                     (grad,) = torch.autograd.grad(actual, h, retain_graph=True)

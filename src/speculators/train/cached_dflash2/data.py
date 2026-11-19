@@ -223,7 +223,9 @@ def predictions(model, data, anchors, training):
         )
         mtp = data["mtp_sample_hidden"][rows, anchors]
         h = model.backbone(data["features"], data["ids"], anchors, mtp, first)
-        index = anchors[:, :, None] + 2 + torch.arange(6, device=anchors.device)
+        # Target hidden at i supplies logits for token ids[i + 1]. The first
+        # D-MTP output predicts ids[a + 2], so its teacher row is a + 1.
+        index = anchors[:, :, None] + 1 + torch.arange(6, device=anchors.device)
     else:
         first = data["ids"][rows, anchors]
         h = model.backbone(data["features"], data["ids"], anchors)

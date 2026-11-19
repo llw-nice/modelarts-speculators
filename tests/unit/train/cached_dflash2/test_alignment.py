@@ -152,7 +152,7 @@ class TimingTests(unittest.TestCase):
         _, _, first_eval = predictions(self.model, data, self.a, False)
         torch.testing.assert_close(first_train, self.tokens[:, 8])
         torch.testing.assert_close(first_eval, data["mtp_token"][:, 7])
-        self.assertEqual(index.flatten().tolist(), [9, 10, 11, 12, 13, 14])
+        self.assertEqual(index.flatten().tolist(), [8, 9, 10, 11, 12, 13])
 
     def test_dual_anchor_layout_supports_multiple_blocks_per_sequence(self):
         anchors = torch.tensor([[5, 9]], device=DEVICE)

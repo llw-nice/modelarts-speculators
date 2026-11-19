@@ -311,9 +311,11 @@ def train(a: CachedDFlash2Config):  # noqa: C901
         "tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
         "trainable_parameters": sum(x.numel() for x in params),
         "frozen_components": list(FROZEN),
-        "ce_target": (
-            "cached verifier logits argmax at same prefix, never transcript IDs"
-        ),
+        "loss_target": {
+            "soft_ce": "full-vocabulary target softmax distribution at same prefix",
+            "kl": "full-vocabulary target softmax distribution at same prefix",
+            "ce": "cached verifier logits argmax at same prefix",
+        }[a.objective],
         "precision": (
             "FP32 master/Adam; BF16 autocast, frozen head and cached teacher features"
         ),

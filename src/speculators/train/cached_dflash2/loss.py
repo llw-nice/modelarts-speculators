@@ -11,8 +11,8 @@ from torch.nn import functional
 class FrozenHeadLoss(torch.autograd.Function):
     @staticmethod
     def forward(ctx, hidden, teacher, head, weights, chunk_size, objective):
-        if objective not in ("kl", "ce") or head.requires_grad:
-            raise ValueError("Expected kl/ce and a frozen output head")
+        if objective not in ("kl", "ce", "soft_ce") or head.requires_grad:
+            raise ValueError("Expected kl/ce/soft_ce and a frozen output head")
         if hidden.shape != teacher.shape or weights.numel() != hidden.shape[-2]:
             raise ValueError("Teacher/slot alignment mismatch")
         shape = hidden.shape[:-1]
@@ -34,11 +34,14 @@ class FrozenHeadLoss(torch.autograd.Function):
                 labels[start:end] = gold
                 candidates[start:end] = q.topk(candidates.shape[-1], -1).indices
                 delta = q.softmax(-1)
-                if objective == "kl":
+                if objective in ("kl", "soft_ce"):
                     p = target.softmax(-1)
-                    per_slot = functional.kl_div(
-                        q.log_softmax(-1), p, reduction="none"
-                    ).sum(-1)
+                    if objective == "kl":
+                        per_slot = functional.kl_div(
+                            q.log_softmax(-1), p, reduction="none"
+                        ).sum(-1)
+                    else:
+                        per_slot = -(p * q.log_softmax(-1)).sum(-1)
                     delta -= p
                 else:
                     per_slot = functional.cross_entropy(q, gold, reduction="none")

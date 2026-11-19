@@ -20,7 +20,7 @@ class CachedDFlash2Config(BaseModel):
     output: Path
     arm: Literal["dense", "token", "fusion"] = "dense"
     fusion_init: Literal["replace", "residual-zero"] = "residual-zero"
-    objective: Literal["kl", "ce"] = "kl"
+    objective: Literal["kl", "ce", "soft_ce"] = "kl"
     lr: float = Field(default=3e-5, gt=0)
     device: str = "cuda"
     epochs: int = Field(default=5, gt=0)
